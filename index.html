@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Faktúry PRO | alibel.sk</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Knižnica na generovanie PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <!-- Knižnica pre QR kódy -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <!-- Knižnica pre čítanie Excel súborov -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- Knižnica pre OCR (Čítanie textu z obrázkov) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        
+        body { 
+            font-family: 'Inter', sans-serif; 
+            -webkit-print-color-adjust: exact; 
+            print-color-adjust: exact;
+        }
+
+        /* Extrémne presný A4 formát pre zamedzenie druhej prázdnej strany */
+        .a4-preview {
+            width: 210mm !important;
+            height: 296mm !important; 
+            max-height: 296mm !important;
+            background: white;
+            padding: 15mm;
+            box-sizing: border-box;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+            margin: 0 auto;
+            position: relative;
+            overflow: hidden !important; 
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Optimalizácia pre natívnu tlač (Ctrl+P) v prehliadači */
+        @media print {
+            body, html { 
+                background: white !important; 
+                margin: 0 !important; 
+                padding: 0 !important; 
+                height: 100vh !important;
+                overflow: hidden !important; 
+            }
+            
+            /* Skryjeme úplne všetko na stránke */
+            body * { visibility: hidden; }
+            
+            /* Zviditeľníme iba faktúru a jej obsah */
+            #invoice-preview, #invoice-preview * { visibility: visible; }
+            
+            #invoice-preview { 
+                position: absolute !important; 
+                left: 0 !important; 
+                top: 0 !important; 
+                width: 210mm !important; 
+                height: 296mm !important; 
+                box-shadow: none !important; 
+                border: none !important;
+                margin: 0 !important; 
+                padding: 10mm !important;
+                overflow: hidden !important;
+                page-break-after: avoid !important;
+                page-break-inside: avoid !important;
+            }
+            
+            @page { size: A4 portrait; margin: 0; }
+        }
+
+        .transition-all { transition: all 0.3s ease; }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-900 min-h-screen">
+
+    <!-- 1. VSTUPNÁ BRÁNA (HESLO) -->
+    <div id="login-gate" class="fixed inset-0 z-[200] bg-slate-900 flex items-center justify-center p-4">
+        <div class="bg-white p-10 md:p-14 rounded-[3rem] shadow-2xl max-w-sm w-full text-center animate-in fade-in zoom-in duration-500">
+            <div class="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-indigo-500/20 text-white">
+                <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+            </div>
+            <h1 class="text-3xl font-black tracking-tight mb-3 text-slate-800">Prístup PRO</h1>
+            <p class="text-slate-500 text-sm font-medium mb-10 leading-relaxed text-center">Zabezpečený prístup k systému Alibel Faktúry.</p>
+            
+            <div class="space-y-4">
+                <input type="password" id="gate-password" placeholder="Heslo" class="w-full p-5 bg-slate-100 border-none rounded-2xl text-center font-black tracking-[0.3em] outline-none focus:ring-4 focus:ring-indigo-100 transition-all text-xl text-slate-800">
+                <button onclick="checkGatePassword()" class="w-full py-5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-xl transition-all active:scale-95 uppercase tracking-[0.2em] text-xs">
+                    Odomknúť prístup
+                </button>
+            </div>
+            <p id="gate-error" class="text-red-500 text-[11px] font-black uppercase mt-6 hidden text-center">⚠️ Nesprávne heslo!</p>
+        </div>
+    </div>
+
+    <!-- 2. HLAVNÁ APLIKÁCIA -->
+    <div id="main-app" class="hidden opacity-0 transition-opacity duration-1000">
+        
+        <header class="max-w-7xl mx-auto mb-8 flex flex-col lg:flex-row justify-between items-center gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200 mt-6 mx-4">
+            <div class="flex items-center gap-4">
+                <div class="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg text-white">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-black tracking-tight leading-none text-slate-800">Faktúry<span class="text-indigo-600 font-black">PRO</span></h1>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">alibel.sk cloud system</p>
+                </div>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-center gap-3">
+                <button onclick="openModal('clients')" class="flex items-center gap-2 px-6 py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-wider transition-all text-slate-900">Odberatelia</button>
+                <button onclick="openModal('history')" class="flex items-center gap-2 px-6 py-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-wider transition-all text-slate-900">Evidencia</button>
+                <button onclick="window.resetForm()" class="flex items-center gap-2 px-6 py-3 bg-red-50 hover:bg-red-100 border border-red-200 rounded-2xl text-xs font-black uppercase tracking-wider transition-all text-red-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"></path></svg>
+                    Nová faktúra
+                </button>
+                <div class="h-10 w-px bg-slate-200 mx-2 hidden md:block"></div>
+                <div id="auth-container">
+                    <button id="login-btn" onclick="window.handleLogin()" class="flex items-center gap-3 px-6 py-3 bg-slate-900 text-white rounded-2xl text-xs font-black uppercase tracking-wider shadow-xl transition-all active:scale-95 text-white">Prihlásiť / Záloha</button>
+                    <div id="user-info" class="hidden flex items-center gap-4 bg-emerald-50/50 p-1.5 pr-4 rounded-2xl border border-emerald-100">
+                        <div class="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center text-white"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg></div>
+                        <div class="text-left"><p id="user-email" class="text-[10px] font-black text-slate-800 leading-none"></p><p class="text-[9px] font-bold text-emerald-600 uppercase mt-1">Cloud Online</p></div>
+                        <button onclick="window.handleLogout()" class="p-2 text-slate-300 hover:text-red-500"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg></button>
+                    </div>
+                </div>
+                <div class="ml-2">
+                    <span id="sync-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-slate-300 shadow-[0_0_8px_rgba(203,213,225,0.5)]"></span>
+                </div>
+            </div>
+        </header>
+
+        <div class="max-w-7xl mx-auto flex flex-col lg:flex-row gap-10 px-4 mb-20">
+            <!-- ĽAVÝ PANEL: OVLÁDANIE -->
+            <div class="w-full lg:w-1/3 space-y-8">
+                <!-- 1. Moje údaje -->
+                <section class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="font-black text-slate-400 uppercase text-[10px] tracking-widest underline decoration-indigo-200 underline-offset-4">1. Moje údaje</h3>
+                        <button onclick="saveProfile()" class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Uložiť</button>
+                    </div>
+                    <select id="profile-select" onchange="applyProfile()" class="w-full mb-5 p-4 bg-slate-50 border-none rounded-2xl text-sm font-bold outline-none cursor-pointer">
+                        <option value="">+ Nový profil / Ručne</option>
+                    </select>
+                    <div class="space-y-3">
+                        <input type="text" id="m-name" placeholder="Názov vašej firmy / Meno" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-indigo-50">
+                        <div class="grid grid-cols-3 gap-2">
+                            <input type="text" id="m-street" placeholder="Ulica" oninput="window.liveUpdate()" class="col-span-2 p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="m-num" placeholder="Číslo" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" id="m-zip" placeholder="PSČ" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="m-city" placeholder="Mesto" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" id="m-ico" placeholder="IČO" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="m-dic" placeholder="DIČ" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <input type="text" id="m-iban" placeholder="IBAN (vyžadovaný pre QR)" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-mono uppercase tracking-tighter outline-none">
+                    </div>
+                    
+                    <!-- Nový blok: Platca DPH prepínač -->
+                    <div class="mt-4 p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl flex flex-col gap-3">
+                        <label class="flex items-center gap-3 cursor-pointer w-max">
+                            <input type="checkbox" id="m-is-dph" onchange="window.liveUpdate()" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 cursor-pointer">
+                            <span class="text-sm font-black text-slate-700">Som platca DPH</span>
+                        </label>
+                        <div id="dph-settings-block" class="hidden items-center gap-3 mt-1 transition-all">
+                            <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">Predvolená sadzba:</span>
+                            <select id="m-dph-rate" onchange="window.liveUpdate()" class="p-2 bg-white rounded-xl text-xs font-bold outline-none border border-slate-200 cursor-pointer shadow-sm">
+                                <option value="20">20%</option>
+                                <option value="10">10%</option>
+                                <option value="0">0%</option>
+                            </select>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 2. Odberateľ -->
+                <section class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="font-black text-slate-400 uppercase text-[10px] tracking-widest underline decoration-emerald-200 underline-offset-4">2. Odberateľ</h3>
+                        <button onclick="saveClient()" class="text-[10px] font-black text-indigo-600 uppercase tracking-widest">Uložiť</button>
+                    </div>
+                    <select id="client-select" onchange="applyClient()" class="w-full mb-5 p-4 bg-slate-50 border-none rounded-2xl text-sm font-bold outline-none cursor-pointer">
+                        <option value="">+ Nový odberateľ</option>
+                    </select>
+                    <div class="space-y-3">
+                        <input type="text" id="c-name" placeholder="Názov odberateľa" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-emerald-50">
+                        <div class="grid grid-cols-3 gap-2">
+                            <input type="text" id="c-street" placeholder="Ulica" oninput="window.liveUpdate()" class="col-span-2 p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="c-num" placeholder="Číslo" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <input type="text" id="c-zip" placeholder="PSČ" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="c-city" placeholder="Mesto" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <div class="grid grid-cols-3 gap-2">
+                            <div class="relative w-full">
+                                <input type="text" id="c-ico" placeholder="IČO" oninput="window.liveUpdate()" class="w-full p-4 pr-10 bg-slate-50 rounded-2xl text-sm outline-none">
+                                <button onclick="window.fetchIcoData()" id="ico-search-btn" class="absolute right-3 top-1/2 -translate-y-1/2 text-emerald-600 hover:text-emerald-800 transition-all active:scale-90" title="Automaticky načítať údaje z registra SR">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                                </button>
+                            </div>
+                            <input type="text" id="c-dic" placeholder="DIČ" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                            <input type="text" id="c-icdph" placeholder="IČ DPH" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
+                        </div>
+                        <input type="number" step="0.01" id="c-default-amount" placeholder="Pravidelná suma fakturácie v € (nepovinné)" class="w-full p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-sm font-bold outline-none text-emerald-700 placeholder-emerald-400 transition-all" title="Táto suma sa automaticky vloží do položiek faktúry po výbere tohto odberateľa." oninput="window.liveUpdate()">
+                    </div>
+                </section>
+
+                <!-- 3. Položky -->
+                <section class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200">
+                    <h3 class="font-black text-slate-400 uppercase text-[10px] tracking-widest mb-6">3. Položky</h3>
+                    
+                    <!-- Nový blok pre DPH nastavenie -->
+                    <div id="dph-input-mode-block" class="hidden mb-4 flex items-center justify-between bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                        <span class="text-[10px] font-black text-emerald-800 uppercase tracking-widest">Suma v položkách je:</span>
+                        <select id="in-dph-mode" onchange="window.liveUpdate()" class="p-2 bg-white rounded-xl text-xs font-bold outline-none text-emerald-700 border border-emerald-200 cursor-pointer shadow-sm">
+                            <option value="bez">Bez DPH</option>
+                            <option value="s">S DPH (konečná)</option>
+                        </select>
+                    </div>
+
+                    <div id="items-inputs" class="space-y-4 mb-6"></div>
+                    <button type="button" onclick="window.addItem(this)" class="w-full py-3 bg-slate-50 hover:bg-slate-100 rounded-2xl text-[10px] font-black text-indigo-600 uppercase tracking-widest transition-all">+ Pridať fakturovanú službu</button>
+                </section>
+
+                <!-- Nastavenie tlače -->
+                <section class="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-200 space-y-6">
+                    <div class="grid grid-cols-2 gap-3">
+                        <select id="sel-month" onchange="window.updateDates()" class="p-4 bg-slate-50 rounded-2xl text-sm font-black outline-none cursor-pointer text-slate-900"></select>
+                        <select id="sel-year" onchange="window.updateDates()" class="p-4 bg-slate-50 rounded-2xl text-sm font-black outline-none cursor-pointer text-slate-900"></select>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-1 block">Poradie č.</p>
+                            <input type="number" id="in-seq" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-900 text-white rounded-2xl text-lg font-black outline-none text-center shadow-xl">
+                        </div>
+                        <div>
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest ml-4 mb-1 block">Množstvo</p>
+                            <select id="in-bulk" class="w-full p-4 bg-indigo-50 border-none rounded-2xl text-[10px] font-black text-indigo-700 outline-none uppercase tracking-tighter text-center cursor-pointer">
+                                <option value="1">Iba táto</option>
+                                <option value="3">Spolu 3</option>
+                                <option value="6">Spolu 6</option>
+                                <option value="12">Spolu 12</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="flex gap-3">
+                        <button type="button" onclick="window.resetForm()" class="w-1/3 py-6 bg-red-50 hover:bg-red-100 text-red-600 font-black rounded-[2rem] border border-red-100 transition-all uppercase tracking-[0.1em] text-xs active:scale-95">Vyčistiť</button>
+                        <button type="button" id="gen-btn" onclick="generate()" class="w-2/3 py-6 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-[2rem] shadow-2xl shadow-indigo-200 transition-all uppercase tracking-[0.2em] text-sm active:scale-95">Tlačiť a Uložiť</button>
+                    </div>
+                </section>
+            </div>
+
+            <!-- PRAVÝ PANEL: NÁHĽAD (A4) -->
+            <div class="w-full lg:w-2/3 flex justify-center">
+                <div id="invoice-preview" class="a4-preview text-slate-900 bg-white">
+                    
+                    <!-- Hlavička -->
+                    <div class="flex justify-between items-start mb-10 pb-6 border-b-4 border-slate-900 text-slate-900">
+                        <div>
+                            <h1 class="text-6xl font-black tracking-tighter mb-4 leading-none">FAKTÚRA</h1>
+                            <div class="bg-slate-100 px-5 py-2 rounded-2xl inline-block text-base font-black text-indigo-700 uppercase">
+                                Číslo: <span id="out-num"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Firmy -->
+                    <div class="flex justify-between mb-10 text-slate-900">
+                        <div class="w-[45%] pr-4 text-slate-900">
+                            <h3 class="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-4">Dodávateľ</h3>
+                            <p class="font-black text-xl mb-1 leading-tight" id="out-m-name"></p>
+                            <p class="text-slate-600 text-sm leading-relaxed" id="out-m-addr"></p>
+                            <div class="mt-6 grid grid-cols-2 text-xs font-black gap-y-2 border-t border-slate-100 pt-4">
+                                <span class="text-slate-400 uppercase tracking-widest text-[9px]">IČO:</span> <span id="out-m-ico"></span>
+                                <span class="text-slate-400 uppercase tracking-widest text-[9px]">DIČ:</span> <span id="out-m-dic"></span>
+                            </div>
+                        </div>
+                        <div class="w-[50%] bg-slate-50 p-8 rounded-3xl border-2 border-slate-100 text-slate-900">
+                            <h3 class="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-4 text-emerald-600">Odberateľ</h3>
+                            <p class="font-black text-xl mb-1 leading-tight text-slate-900" id="out-c-name"></p>
+                            <p class="text-slate-600 text-sm leading-relaxed" id="out-c-addr"></p>
+                            <div class="mt-6 grid grid-cols-2 text-xs font-black gap-y-2 border-t border-slate-200 pt-4">
+                                <span class="text-slate-400 uppercase tracking-widest text-[9px]">IČO:</span> <span id="out-c-ico"></span>
+                                <span class="text-slate-400 uppercase tracking-widest text-[9px]">DIČ:</span> <span id="out-c-dic"></span>
+                                <span class="text-slate-400 uppercase tracking-widest text-[9px]">IČ DPH:</span> <span id="out-c-icdph"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Dátumy v jednom riadku -->
+                    <div class="flex border-y-4 border-slate-900 py-6 mb-10 text-slate-900">
+                        <div class="w-1/3 text-center border-r-2 border-slate-100 px-2">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Vystavenie</p>
+                            <p class="font-black text-lg" id="out-date-vyst"></p>
+                        </div>
+                        <div class="w-1/3 text-center border-r-2 border-slate-100 px-2 text-slate-900">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1">Dodanie služby</p>
+                            <p class="font-black text-lg text-slate-700" id="out-date-dod"></p>
+                        </div>
+                        <div class="w-1/3 text-center px-2">
+                            <p class="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-1 text-indigo-600">Splatnosť</p>
+                            <p class="font-black text-indigo-600 text-xl tracking-tighter" id="out-date-spl"></p>
+                        </div>
+                    </div>
+
+                    <!-- Tabuľka položiek -->
+                    <div class="flex-1 overflow-hidden">
+                        <table class="w-full mb-6 border-collapse">
+                            <thead id="out-table-header" class="bg-slate-900 text-white">
+                                <!-- Dynamicky menené cez JS podľa DPH -->
+                            </thead>
+                            <tbody id="out-items-table" class="text-sm font-bold divide-y divide-slate-100 text-slate-900"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- Pätička s QR kódom fixne na spodku -->
+                    <div class="mt-auto flex justify-between items-end border-t-4 border-slate-900 pt-8 text-slate-900">
+                        <div class="flex items-center text-slate-900">
+                            <div class="p-2 bg-white border-2 border-slate-200 rounded-2xl mr-6">
+                                <canvas id="qr-code" style="width: 120px; height: 120px;"></canvas>
+                            </div>
+                            <div class="space-y-1">
+                                <p class="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-[0.3em]">Platba</p>
+                                <p class="text-xs font-bold text-slate-500">IBAN:<br><span id="out-m-iban" class="font-mono text-slate-900 text-base tracking-tighter font-black"></span></p>
+                                <p class="text-xs font-bold text-slate-500 pt-1">VS: <span id="out-v-sym" class="text-slate-900 text-base font-black tracking-widest"></span></p>
+                            </div>
+                        </div>
+                        
+                        <!-- DPH RECAP + TOTAL BOX -->
+                        <div class="flex items-end gap-6">
+                            <!-- Tento blok sa ukáže iba ak si platca DPH -->
+                            <div id="out-dph-recap" class="hidden text-right space-y-1.5 mb-1 mr-2">
+                                <p class="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 border-b-2 border-slate-100 pb-2">Rekapitulácia DPH</p>
+                                <p class="text-[11px] font-bold text-slate-500">Základ dane: <span id="out-dph-base" class="text-slate-900 font-black ml-3">0.00 €</span></p>
+                                <p class="text-[11px] font-bold text-slate-500">DPH <span id="out-dph-rate-label">20%</span>: <span id="out-dph-amount" class="text-slate-900 font-black ml-3">0.00 €</span></p>
+                            </div>
+                            
+                            <div class="bg-slate-900 text-white px-8 py-6 rounded-3xl text-right shadow-2xl relative overflow-hidden min-w-[200px]">
+                                <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mb-2 text-slate-300">Na úhradu</p>
+                                <p class="text-4xl font-black tracking-tighter leading-none text-white whitespace-nowrap"><span id="out-total"></span> €</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p id="out-bottom-text" class="mt-10 text-center text-[10px] text-slate-400 font-bold italic uppercase tracking-widest text-slate-400">
+                        Nie som platca DPH. Faktúra slúži zároveň ako dodací list.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL PRE SETUP CLOUDU -->
+    <div id="cloud-setup-modal" class="hidden fixed inset-0 bg-slate-900/98 backdrop-blur-2xl z-[300] flex items-center justify-center p-4">
+        <div class="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl p-10 flex flex-col text-slate-900">
+            <h2 class="text-3xl font-black mb-4">Napojenie na Databázu</h2>
+            <p class="text-sm text-slate-500 mb-6 leading-relaxed">
+                Pretože program beží na vašom vlastnom webe (Netlify), potrebujete vlastnú databázu. <br><br>
+                1. Vytvorte si projekt na <b>firebase.google.com</b><br>
+                2. Zapnite <b>Authentication (Google)</b> a <b>Firestore Database</b><br>
+                3. V nastaveniach projektu skopírujte kód a vložte ho sem:
+            </p>
+            <textarea id="firebase-input" rows="8" class="w-full p-5 bg-slate-50 border rounded-2xl text-xs font-mono mb-6 outline-none focus:ring-2 focus:ring-indigo-100 text-slate-900" placeholder='Tu vložte konfiguráciu z Firebase (napríklad: const firebaseConfig = { ... }; )'></textarea>
+            <div class="flex gap-4">
+                <button onclick="closeCloudModal()" class="flex-1 py-4 bg-slate-100 rounded-2xl font-bold text-slate-900 transition-all hover:bg-slate-200">Zrušiť</button>
+                <button onclick="saveCloudConfig()" class="flex-1 py-4 bg-indigo-600 text-white rounded-2xl font-black text-white transition-all hover:bg-indigo-700">Uložiť a Načítať</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODÁLNE OKNÁ PRE HISTÓRIU A FIRMY -->
+    <div id="modal-container" class="hidden fixed inset-0 bg-slate-900/98 backdrop-blur-2xl z-[150] flex items-center justify-center p-4 text-slate-900">
+        <div class="bg-white rounded-[4rem] shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div class="p-12 border-b flex justify-between items-center bg-slate-50/50">
+                <h2 id="modal-title" class="text-3xl font-black tracking-tight text-slate-800">Možnosti</h2>
+                <button onclick="closeModal()" class="p-4 text-slate-300 hover:text-slate-900 transition-all rounded-full bg-white shadow-xl hover:rotate-90 text-slate-900">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div id="modal-content" class="p-12 overflow-y-auto flex-1 bg-white text-slate-900"></div>
+        </div>
+    </div>
+
+    <div id="unified-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[400] flex items-center justify-center p-4">
+        <div class="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-8 text-center"><p id="unified-modal-message" class="text-slate-700 font-bold mb-8"></p><div id="unified-modal-buttons" class="flex justify-center gap-4"></div></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const MASTER_PASSWORD = "M0b1l1t@";
+
+        window.checkGatePassword = function() {
+            if(document.getElementById('gate-password').value === MASTER_PASSWORD) {
+                document.getElementById('login-gate').classList.add('hidden');
+                document.getElementById('main-app').classList.remove('hidden');
+                setTimeout(() => document.getElementById('main-app').style.opacity = "1", 50);
+            } else {
+                document.getElementById('gate-error').classList.remove('hidden');
+                setTimeout(() => document.getElementById('gate-error').classList.add('hidden'), 3000);
+            }
+        };
+
+        document.getElementById('gate-password').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                window.checkGatePassword();
+            }
+        });
+
+        let auth, db, user = null;
+        let storage = { profiles: [], clients: [], invoices: [], lastSeq: 0 };
+        window.activeItems = [{ desc: '', amount: 0 }];
+        let appId = 'alibel-faktury-v4';
+
+        const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : localStorage.getItem('dzoj_config');
+        
+        if (firebaseConfigStr) {
+            try {
+                const config = JSON.parse(firebaseConfigStr);
+                const fApp = initializeApp(config);
+                auth = getAuth(fApp);
+                db = getFirestore(fApp);
+            } catch (e) { console.warn("Firebase fallback mode."); }
+        }
+
+        async function start() {
+            if (auth) {
+                onAuthStateChanged(auth, (u) => {
+                    user = u;
+                    if(u && !u.isAnonymous) {
+                        document.getElementById('login-btn').classList.add('hidden');
+                        document.getElementById('user-info').classList.remove('hidden');
+                        document.getElementById('user-email').innerText = u.email;
+                        setupSync();
+                    } else { loadLocal(); }
+                });
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                else await signInAnonymously(auth);
+            } else { loadLocal(); }
+        }
+
+        window.handleLogin = async function() {
+            if(!auth) { 
+                document.getElementById('cloud-setup-modal').classList.remove('hidden'); 
+                return; 
+            }
+            try { 
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider); 
+            } catch(e) { 
+                console.error("Login error:", e);
+                if (e.code === 'auth/unauthorized-domain') {
+                    window.showModal("Chyba: Vaša adresa na Netlify nie je povolená vo Firebase. Pridajte ju v sekcii Authentication -> Settings -> Authorized domains.");
+                } else if (e.code !== 'auth/popup-closed-by-user') {
+                    window.showModal("Prihlásenie zlyhalo: " + e.message); 
+                }
+            }
+        };
+
+        window.saveCloudConfig = function() {
+            let val = document.getElementById('firebase-input').value.trim();
+            
+            // Očistenie kódu, ak používateľ skopíroval z Firebase aj premennú (napr. const firebaseConfig = {...};)
+            const startIndex = val.indexOf('{');
+            const endIndex = val.lastIndexOf('}');
+            
+            if (startIndex !== -1 && endIndex !== -1) {
+                val = val.substring(startIndex, endIndex + 1);
+            }
+
+            try { 
+                // new Function je oveľa múdrejšia ako JSON.parse a zvládne aj Firebase kód bez úvodzoviek okolo kľúčov
+                const parsed = new Function("return " + val)(); 
+                
+                if (!parsed || !parsed.apiKey) throw new Error("Missing apiKey");
+
+                localStorage.setItem('dzoj_config', JSON.stringify(parsed)); 
+                location.reload(); 
+            } catch(e) { 
+                window.showModal("Chybný formát kódu! Uistite sa, že ste skopírovali celý blok (musí obsahovať zátvorky { } a váš apiKey)."); 
+            }
+        };
+
+        window.closeCloudModal = function() { document.getElementById('cloud-setup-modal').classList.add('hidden'); };
+        window.handleLogout = function() { auth && signOut(auth).then(() => location.reload()); };
+
+        function setupSync() {
+            onSnapshot(doc(db, 'artifacts', appId, 'users', user.uid, 'appData', 'main'), (snap) => {
+                if(snap.exists()) { 
+                    const data = snap.data();
+                    storage.profiles = data.profiles || [];
+                    storage.clients = data.clients || [];
+                    storage.invoices = data.invoices || [];
+                    storage.lastSeq = data.lastSeq || 0;
+                    renderUI(); 
+                }
+                else saveAll();
+            });
+        }
+
+        window.saveAll = async function() {
+            if(user && !user.isAnonymous && db) {
+                try { await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'appData', 'main'), storage); } catch(e) {}
+            }
+            localStorage.setItem('alibel_db_v4', JSON.stringify(storage));
+        }
+
+        function loadLocal() {
+            try {
+                const local = localStorage.getItem('alibel_db_v4');
+                if(local) {
+                    const parsed = JSON.parse(local);
+                    storage.profiles = parsed.profiles || [];
+                    storage.clients = parsed.clients || [];
+                    storage.invoices = parsed.invoices || [];
+                    storage.lastSeq = parsed.lastSeq || 0;
+                }
+            } catch(e) {}
+            renderUI();
+        }
+
+        function gv(id) { 
+            const el = document.getElementById(id);
+            return el ? el.value.trim() : ''; 
+        }
+
+        window.showModal = function(msg, type = 'alert', onConfirm = null) {
+            const m = document.getElementById('unified-modal');
+            document.getElementById('unified-modal-message').innerText = msg;
+            const bc = document.getElementById('unified-modal-buttons'); bc.innerHTML = '';
+            if (type === 'confirm') {
+                const c = document.createElement('button'); c.className = 'px-6 py-2.5 bg-slate-100 rounded-xl font-bold'; c.innerText = 'Zrušiť'; c.onclick = () => m.classList.add('hidden');
+                const ok = document.createElement('button'); ok.className = 'px-6 py-2.5 bg-red-600 text-white rounded-xl font-bold'; ok.innerText = 'Potvrdiť'; ok.onclick = () => { m.classList.add('hidden'); if(onConfirm) onConfirm(); };
+                bc.appendChild(c); bc.appendChild(ok);
+            } else {
+                const ok = document.createElement('button'); ok.className = 'px-10 py-2.5 bg-slate-900 text-white rounded-xl font-bold'; ok.innerText = 'OK'; ok.onclick = () => m.classList.add('hidden');
+                bc.appendChild(ok);
+            }
+            m.classList.remove('hidden');
+        };
+
+        window.liveUpdate = function() {
+            const set = (id, v) => { const el = document.getElementById(id); if(el) el.innerText = v || ''; };
+            const setHtml = (id, v) => { const el = document.getElementById(id); if(el) el.innerHTML = v || ''; };
+            
+            set('out-m-name', gv('m-name'));
+            setHtml('out-m-addr', `${gv('m-street')} ${gv('m-num')}<br>${gv('m-zip')} ${gv('m-city')}`);
+            set('out-m-ico', gv('m-ico') || '-');
+            set('out-m-dic', gv('m-dic') || '-');
+            
+            set('out-c-name', gv('c-name'));
+            setHtml('out-c-addr', `${gv('c-street')} ${gv('c-num')}<br>${gv('c-zip')} ${gv('c-city')}`);
+            set('out-c-ico', gv('c-ico') || '-');
+            set('out-c-dic', gv('c-dic') || '-');
+            set('out-c-icdph', gv('c-icdph') || '-');
+            
+            const vs = getVS();
+            set('out-num', vs);
+            set('out-v-sym', vs);
+            set('out-m-iban', gv('m-iban').toUpperCase());
+            
+            // Logika DPH
+            const isDph = document.getElementById('m-is-dph').checked;
+            const dphRate = parseFloat(document.getElementById('m-dph-rate').value) || 20;
+            const inputMode = document.getElementById('in-dph-mode').value; // 'bez' alebo 's'
+
+            // Zobrazenie / Skrytie DPH blokov vo formulári
+            document.getElementById('dph-settings-block').style.display = isDph ? 'flex' : 'none';
+            document.getElementById('dph-input-mode-block').style.display = isDph ? 'flex' : 'none';
+            
+            // Nastavenie hlavičky tabuľky na PDF
+            const thHeader = document.getElementById('out-table-header');
+            if (isDph) {
+                thHeader.innerHTML = `<tr>
+                    <th class="py-4 px-6 text-left text-[10px] font-black uppercase tracking-[0.2em] rounded-tl-xl">Popis položky / práce</th>
+                    <th class="py-4 px-6 text-right text-[10px] font-black uppercase tracking-[0.2em]">Cena bez DPH</th>
+                    <th class="py-4 px-6 text-right text-[10px] font-black uppercase tracking-[0.2em]">DPH %</th>
+                    <th class="py-4 px-6 text-right text-[10px] font-black uppercase tracking-[0.2em] rounded-tr-xl">Spolu</th>
+                </tr>`;
+            } else {
+                thHeader.innerHTML = `<tr>
+                    <th class="py-4 px-6 text-left text-[10px] font-black uppercase tracking-[0.2em] rounded-tl-xl">Popis položky / práce</th>
+                    <th class="py-4 px-6 text-right text-[10px] font-black uppercase tracking-[0.2em] rounded-tr-xl">Suma celkom</th>
+                </tr>`;
+            }
+
+            const tb = document.getElementById('out-items-table'); if(!tb) return;
+            tb.innerHTML = '';
+            
+            let totalBase = 0;
+            let totalVat = 0;
+            let totalSum = 0;
+
+            window.activeItems.forEach(it => {
+                let rowBase = 0, rowVat = 0, rowTotal = 0;
+                
+                if (isDph) {
+                    if (inputMode === 'bez') {
+                        rowBase = it.amount;
+                        rowVat = rowBase * (dphRate / 100);
+                        rowTotal = rowBase + rowVat;
+                    } else { // inputMode === 's'
+                        rowTotal = it.amount;
+                        rowBase = rowTotal / (1 + (dphRate / 100));
+                        rowVat = rowTotal - rowBase;
+                    }
+                    
+                    totalBase += rowBase;
+                    totalVat += rowVat;
+                    totalSum += rowTotal;
+                    
+                    tb.innerHTML += `<tr class="border-b border-slate-50 text-slate-900">
+                        <td class="py-5 px-6 font-black">${it.desc || 'Služby'}</td>
+                        <td class="py-5 px-6 text-right font-bold">${rowBase.toFixed(2)} €</td>
+                        <td class="py-5 px-6 text-right font-bold text-slate-400">${dphRate}%</td>
+                        <td class="py-5 px-6 text-right font-black text-lg">${rowTotal.toFixed(2)} €</td>
+                    </tr>`;
+                } else {
+                    totalSum += it.amount;
+                    tb.innerHTML += `<tr class="border-b border-slate-50 text-slate-900">
+                        <td class="py-5 px-6 font-black">${it.desc || 'Služby'}</td>
+                        <td class="py-5 px-6 text-right font-black text-lg">${it.amount.toFixed(2)} €</td>
+                    </tr>`;
+                }
+            });
+            
+            // Aktualizácia súčtov a spodných textov
+            set('out-total', totalSum.toFixed(2));
+            
+            if (isDph) {
+                document.getElementById('out-dph-recap').classList.remove('hidden');
+                set('out-dph-base', totalBase.toFixed(2) + ' €');
+                set('out-dph-amount', totalVat.toFixed(2) + ' €');
+                set('out-dph-rate-label', dphRate + '%');
+                document.getElementById('out-bottom-text').innerText = "Faktúra slúži zároveň ako dodací list.";
+            } else {
+                document.getElementById('out-dph-recap').classList.add('hidden');
+                document.getElementById('out-bottom-text').innerText = "Nie som platca DPH. Faktúra slúži zároveň ako dodací list.";
+            }
+
+            updateQR(totalSum, vs);
+        };
+
+        function updateQR(amt, vs) {
+            const qrEl = document.getElementById('qr-code');
+            if (!qrEl) return;
+            const iban = gv('m-iban').replace(/\s/g, '').toUpperCase();
+            let name = gv('m-name').trim().substring(0, 70);
+            
+            if (!name) name = 'Firma'; 
+            
+            if (!iban || iban.length < 4 || !window.QRious) {
+                const ctx = qrEl.getContext('2d'); if(ctx) ctx.clearRect(0,0,300,300);
+                return;
+            }
+            
+            const amountStr = `EUR${parseFloat(amt).toFixed(2)}`;
+            const data = ['BCD','002','1','SCT','',name,iban,amountStr,'',vs,'',''].join('\n');
+            new QRious({ element: qrEl, value: data, size: 250, level: 'M', foreground: '#000000' });
+        }
+
+        function getVS() {
+            const seq = (document.getElementById('in-seq')?.value || '1').toString().padStart(2,'0');
+            const mn = (document.getElementById('sel-month')?.value || '1').toString().padStart(2,'0');
+            const yr = (document.getElementById('sel-year')?.value || '2025');
+            return `${seq}${mn}${yr}`;
+        }
+
+        window.addItem = function(btn) { 
+            // Ochrana proti rýchlemu dvojkliku (debounce pomocou časovej pečiatky)
+            const now = Date.now();
+            if (window.lastAddClick && now - window.lastAddClick < 400) return;
+            window.lastAddClick = now;
+
+            window.activeItems.push({desc: '', amount: 0}); 
+            window.renderItemInputs(); 
+            
+            setTimeout(() => {
+                const inputs = document.getElementById('items-inputs').querySelectorAll('input[type="text"]');
+                if(inputs.length > 0) inputs[inputs.length - 1].focus();
+            }, 50);
+        };
+
+        window.renderItemInputs = function() {
+            const c = document.getElementById('items-inputs'); if(!c) return;
+            c.innerHTML = '';
+            window.activeItems.forEach((it, i) => {
+                const d = document.createElement('div');
+                d.className = 'bg-slate-50 p-5 rounded-3xl border-2 border-slate-100 space-y-3 shadow-sm';
+                d.innerHTML = `<input type="text" value="${it.desc}" oninput="window.activeItems[${i}].desc=this.value;window.liveUpdate()" class="w-full p-3 bg-white rounded-2xl border-none text-sm font-bold outline-none text-slate-900" placeholder="Popis položky">
+                <div class="flex items-center gap-4"><input type="number" step="0.01" value="${it.amount}" oninput="window.activeItems[${i}].amount=parseFloat(this.value)||0;window.liveUpdate()" class="w-32 p-3 bg-white rounded-2xl border-none text-sm font-black text-right text-slate-900"> <span class="font-black text-slate-300 text-[10px]">EUR</span>
+                <button type="button" onclick="window.activeItems.splice(${i},1);window.renderItemInputs();window.liveUpdate()" class="ml-auto p-2 text-red-300 hover:text-red-500 transition-all"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button></div>`;
+                c.appendChild(d);
+            });
+            window.liveUpdate();
+        };
+
+        window.updateDates = function() {
+            const m = parseInt(gv('sel-month')), y = parseInt(gv('sel-year'));
+            const lastDay = new Date(y, m, 0);
+            const fmt = d => `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+            const vystEl = document.getElementById('out-date-vyst'), dodEl = document.getElementById('out-date-dod'), splEl = document.getElementById('out-date-spl');
+            if(vystEl) vystEl.innerText = fmt(lastDay);
+            if(dodEl) dodEl.innerText = fmt(lastDay);
+            const due = new Date(lastDay); due.setDate(due.getDate() + 14);
+            if(splEl) splEl.innerText = fmt(due);
+            window.liveUpdate();
+        };
+
+        window.resetForm = function() {
+            if(!confirm("Naozaj chcete vyčistiť formulár a začať tvoriť novú faktúru?")) return;
+
+            document.getElementById('client-select').value = "";
+            ['c-name','c-street','c-num','c-zip','c-city','c-ico','c-dic','c-icdph','c-default-amount'].forEach(id => { 
+                const el = document.getElementById(id); 
+                if(el) el.value = ''; 
+            });
+
+            window.activeItems = [{desc: '', amount: 0}];
+            window.renderItemInputs();
+            
+            const seqEl = document.getElementById('in-seq'); 
+            if(seqEl) seqEl.value = (storage.lastSeq || 0) + 1;
+
+            window.liveUpdate();
+        };
+
+        window.saveProfile = function() {
+            const p = { 
+                name: gv('m-name'), street: gv('m-street'), num: gv('m-num'), zip: gv('m-zip'), 
+                city: gv('m-city'), ico: gv('m-ico'), dic: gv('m-dic'), iban: gv('m-iban'),
+                isDph: document.getElementById('m-is-dph').checked,
+                dphRate: document.getElementById('m-dph-rate').value
+            };
+            if(!p.name) return window.showModal("Názov firmy je povinný!");
+            const idx = storage.profiles.findIndex(x => x.name === p.name);
+            if(idx > -1) storage.profiles[idx] = p; else storage.profiles.push(p);
+            window.saveAll().then(() => { renderUI(); window.showModal("Profil uložený"); });
+        };
+
+        window.saveClient = function() {
+            const c = { 
+                name: gv('c-name'), street: gv('c-street'), num: gv('c-num'), 
+                zip: gv('c-zip'), city: gv('c-city'), ico: gv('c-ico'), 
+                dic: gv('c-dic'), icdph: gv('c-icdph'), defaultAmount: gv('c-default-amount') 
+            };
+            if(!c.name) return window.showModal("Názov odberateľa je povinný!");
+            const idx = storage.clients.findIndex(x => x.name === c.name);
+            if(idx > -1) storage.clients[idx] = c; else storage.clients.push(c);
+            window.saveAll().then(() => { renderUI(); window.showModal("Odberateľ uložený"); });
+        };
+
+        function renderUI() {
+            const ps = document.getElementById('profile-select'); if(ps) {
+                ps.innerHTML = '<option value="">+ Nový profil</option>';
+                (storage.profiles || []).forEach((p,i) => ps.innerHTML += `<option value="${i}">${p.name}</option>`);
+            }
+            const cs = document.getElementById('client-select'); if(cs) {
+                cs.innerHTML = '<option value="">+ Nový odberateľ</option>';
+                (storage.clients || []).forEach((c,i) => cs.innerHTML += `<option value="${i}">${c.name}</option>`);
+            }
+            const seqEl = document.getElementById('in-seq'); if(seqEl) seqEl.value = (storage.lastSeq || 0) + 1;
+            window.renderItemInputs();
+            window.updateDates();
+        }
+
+        window.applyProfile = function() {
+            const p = storage.profiles[gv('profile-select')];
+            if(!p) return;
+            ['name','street','num','zip','city','ico','dic','iban'].forEach(f => { const el = document.getElementById('m-'+f); if(el) el.value = p[f] || ''; });
+            
+            // Nastavenie DPH pre profil
+            const isDphEl = document.getElementById('m-is-dph');
+            if (isDphEl) isDphEl.checked = p.isDph || false;
+            
+            const dphRateEl = document.getElementById('m-dph-rate');
+            if (dphRateEl) dphRateEl.value = p.dphRate || '20';
+
+            window.liveUpdate();
+        };
+
+        window.applyClient = function() {
+            const selIdx = gv('client-select');
+            if (selIdx === '') return;
+            const c = storage.clients[selIdx];
+            if(!c) return;
+            
+            ['name','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
+                const el = document.getElementById('c-'+f); 
+                if(el) el.value = c[f] || ''; 
+            });
+            
+            if (c.defaultAmount && parseFloat(c.defaultAmount) > 0) {
+                if (window.activeItems.length > 0) {
+                    window.activeItems[0].amount = parseFloat(c.defaultAmount);
+                    if (!window.activeItems[0].desc) window.activeItems[0].desc = 'Pravidelná fakturácia';
+                } else {
+                    window.activeItems.push({desc: 'Pravidelná fakturácia', amount: parseFloat(c.defaultAmount)});
+                }
+                window.renderItemInputs();
+            }
+            
+            window.liveUpdate();
+        };
+
+        window.generate = async function() {
+            const btn = document.getElementById('gen-btn');
+            const bulkCount = parseInt(document.getElementById('in-bulk').value);
+            btn.disabled = true; btn.innerText = "Spracovávam...";
+            
+            const startMonth = parseInt(gv('sel-month'));
+            const startYear = parseInt(gv('sel-year'));
+            const startSeq = parseInt(gv('in-seq'));
+
+            for (let i = 0; i < bulkCount; i++) {
+                let curMonth = startMonth + i;
+                let curYear = startYear;
+                while (curMonth > 12) { curMonth -= 12; curYear++; }
+                
+                const mEl = document.getElementById('sel-month'), yEl = document.getElementById('sel-year'), sEl = document.getElementById('in-seq');
+                if(mEl) mEl.value = curMonth;
+                if(yEl) yEl.value = curYear;
+                if(sEl) sEl.value = startSeq + i;
+                window.updateDates();
+                await new Promise(r => setTimeout(r, 600));
+
+                const vs = getVS();
+                storage.invoices.push({ num: vs, client: gv('c-name'), total: document.getElementById('out-total').innerText, date: document.getElementById('out-date-vyst').innerText, status: 'unpaid' });
+                storage.lastSeq = startSeq + i;
+
+                const element = document.getElementById('invoice-preview');
+                const oldShadow = element.style.boxShadow;
+                
+                if(typeof html2pdf !== 'undefined') {
+                    element.style.boxShadow = 'none'; 
+                    await html2pdf().set({ 
+                        margin: 0, 
+                        filename: `Faktura_${vs}.pdf`, 
+                        image: { type: 'jpeg', quality: 1.0 }, 
+                        html2canvas: { scale: 2, useCORS: true, scrollY: 0, scrollX: 0 }, 
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' } 
+                    }).from(element).save();
+                    element.style.boxShadow = oldShadow;
+                } else { window.print(); }
+            }
+            await window.saveAll();
+            btn.disabled = false; btn.innerText = "Tlačiť PDF a Uložiť";
+            window.showModal("Hotovo! Faktúry boli vygenerované a uložené v evidencii.");
+        };
+
+        window.openModal = function(type) {
+            const m = document.getElementById('modal-container');
+            const t = document.getElementById('modal-title');
+            const c = document.getElementById('modal-content');
+            m.classList.remove('hidden');
+            if(type === 'history') {
+                t.innerText = "História a Evidencia úhrad";
+                
+                let totalIssued = 0;
+                let totalPaid = 0;
+                
+                storage.invoices.forEach(inv => {
+                    const amt = parseFloat(inv.total) || 0;
+                    totalIssued += amt;
+                    if(inv.status === 'paid') totalPaid += amt;
+                });
+                
+                let totalUnpaid = totalIssued - totalPaid;
+
+                const statsHtml = `
+                    <div class="grid grid-cols-3 gap-4 mb-8 text-center">
+                        <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                            <p class="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">Vystavené</p>
+                            <h3 class="text-xl font-black text-slate-800">${totalIssued.toFixed(2)} €</h3>
+                        </div>
+                        <div class="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
+                            <p class="text-[10px] text-emerald-600 font-black uppercase tracking-widest mb-1">Uhradené</p>
+                            <h3 class="text-xl font-black text-emerald-700">${totalPaid.toFixed(2)} €</h3>
+                        </div>
+                        <div class="bg-red-50 p-4 rounded-2xl border border-red-100">
+                            <p class="text-[10px] text-red-600 font-black uppercase tracking-widest mb-1">Na úhradu</p>
+                            <h3 class="text-xl font-black text-red-700">${totalUnpaid.toFixed(2)} €</h3>
+                        </div>
+                    </div>
+                `;
+
+                const tableHtml = storage.invoices.length ? `<table class="w-full text-left text-sm font-bold text-slate-800">
+                    <thead class="text-[10px] text-slate-400 border-b uppercase"><tr><th class="py-4">Číslo</th><th>Odberateľ</th><th class="text-right">Suma</th><th class="text-center">Stav</th><th class="text-right">Akcia</th></tr></thead>
+                    <tbody>${[...storage.invoices].reverse().map((inv, revIdx) => {
+                        const origIdx = storage.invoices.length - 1 - revIdx;
+                        const isPaid = inv.status === 'paid';
+                        const btnClass = isPaid ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-500 border-slate-200 hover:bg-slate-200';
+                        const btnText = isPaid ? 'Uhradená' : 'Čaká';
+                        return `<tr class="border-b border-slate-50 transition-colors hover:bg-slate-50">
+                            <td class="py-6">${inv.num}</td>
+                            <td>${inv.client}</td>
+                            <td class="text-right">${inv.total} €</td>
+                            <td class="text-center">
+                                <button onclick="window.toggleInvoiceStatus(${origIdx})" class="px-3 py-1.5 text-[10px] uppercase font-black rounded-lg border transition-all ${btnClass}">${btnText}</button>
+                            </td>
+                            <td class="text-right">
+                                <button onclick="window.deleteInvoice(${origIdx})" class="p-2 text-slate-300 hover:text-red-500 transition-all" title="Vymazať faktúru">
+                                    <svg class="w-5 h-5 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                            </td>
+                        </tr>`;
+                    }).join('')}</tbody>
+                </table>` : '<div class="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-slate-300">Prázdna história</div>';
+                
+                c.innerHTML = statsHtml + tableHtml;
+            } else {
+                t.innerText = "Odberatelia";
+                
+                const importHtml = `
+                <div class="mb-6 flex flex-col sm:flex-row justify-between items-center gap-4 bg-emerald-50 p-6 rounded-3xl border border-emerald-100">
+                    <div>
+                        <h4 class="font-black text-emerald-900 text-sm">Pridať odberateľa z iného zdroja</h4>
+                        <p class="text-[10px] text-emerald-700 mt-1 font-bold">Z excelu / CSV (hromadný zoznam alebo stará faktúra) <br>alebo AI Skenom z obrázka/fotky faktúry (prečíta údaje z faktúry).</p>
+                        <p class="text-[10px] text-emerald-600 mt-1 font-black">Môžete tiež jednoducho stlačiť Ctrl+V na tejto stránke so skopírovaným screenshotom!</p>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2 shrink-0">
+                        <input type="file" id="excel-file-input" accept=".csv, .xlsx, .xls" class="hidden" onchange="window.handleExcelImport(event)">
+                        <button onclick="document.getElementById('excel-file-input').click()" class="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Z Excelu
+                        </button>
+
+                        <input type="file" id="img-file-input" accept="image/*" class="hidden" onchange="window.handleImageImport(event)">
+                        <button onclick="document.getElementById('img-file-input').click()" class="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            Z Obrázka (AI)
+                        </button>
+                    </div>
+                </div>`;
+                
+                const listHtml = storage.clients.length ? storage.clients.map((cl, i) => `<div class="p-8 bg-slate-50 rounded-[2.5rem] border border-slate-100 mb-4 flex justify-between items-center group hover:bg-white shadow-sm transition-all text-slate-800 text-slate-800">
+                    <div>
+                        <p class="text-xl font-black">${cl.name}</p>
+                        <p class="text-[11px] text-slate-400 uppercase font-black mt-1">${cl.city} ${cl.ico ? ' • IČO: '+cl.ico : ''} ${cl.defaultAmount ? '<br><span class="text-emerald-600 mt-1 inline-block">Pravidelná suma: '+parseFloat(cl.defaultAmount).toFixed(2)+' €</span>' : ''}</p>
+                    </div>
+                    <div class="flex gap-2 items-center">
+                        <button onclick="window.editClient(${i})" class="p-4 text-slate-300 hover:text-indigo-500 transition-all" title="Upraviť tohto odberateľa">
+                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                        </button>
+                        <button onclick="window.deleteClient(${i})" class="p-4 text-slate-300 hover:text-red-500 transition-all" title="Vymazať tohto odberateľa">
+                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </div>
+                </div>`).join('') : '<div class="py-24 text-center text-slate-300 font-black uppercase tracking-widest text-slate-300">Prázdny zoznam</div>';
+                
+                c.innerHTML = importHtml + listHtml;
+            }
+        };
+
+        window.editClient = function(i) {
+            const c = storage.clients[i];
+            if(!c) return;
+            ['name','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
+                const el = document.getElementById('c-'+f); 
+                if(el) el.value = c[f] || ''; 
+            });
+            const sel = document.getElementById('client-select');
+            if(sel) sel.value = i;
+            window.liveUpdate();
+            window.closeModal();
+            window.showModal("Údaje odberateľa boli načítané. Pre uloženie zmien kliknite na modré tlačidlo Uložiť v sekcii 2.");
+        };
+
+        window.deleteClient = function(i) { window.showModal("Naozaj chcete vymazať tohto odberateľa?", 'confirm', () => { storage.clients.splice(i,1); window.saveAll().then(() => { window.renderUI(); window.openModal('clients'); }); }); };
+        window.closeModal = function() { document.getElementById('modal-container').classList.add('hidden'); };
+
+        window.toggleInvoiceStatus = function(i) {
+            const inv = storage.invoices[i];
+            inv.status = inv.status === 'paid' ? 'unpaid' : 'paid';
+            window.saveAll().then(() => {
+                window.openModal('history');
+            });
+        };
+
+        window.deleteInvoice = function(i) {
+            window.showModal("Naozaj chcete vymazať túto faktúru z evidencie?", 'confirm', () => {
+                storage.invoices.splice(i, 1);
+                window.saveAll().then(() => {
+                    window.openModal('history');
+                });
+            });
+        };
+
+        window.fetchIcoData = async function() {
+            const icoInput = document.getElementById('c-ico');
+            const ico = icoInput.value.replace(/\s/g, '');
+            if(!ico || ico.length < 6) return window.showModal("Zadajte najskôr platné IČO.");
+
+            const btn = document.getElementById('ico-search-btn');
+            btn.innerHTML = '<svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>';
+            
+            try {
+                const targetUrl = encodeURIComponent(`https://autoform.ekosystem.slovensko.sk/api/corporate-bodies/search?q=${ico}&limit=1`);
+                const res = await fetch(`https://api.allorigins.win/raw?url=${targetUrl}`);
+                
+                if (!res.ok) throw new Error('Sieťová chyba');
+                const data = await res.json();
+                
+                if(data && data.length > 0) {
+                    const comp = data[0];
+                    document.getElementById('c-name').value = comp.name || '';
+                    document.getElementById('c-street').value = comp.streetName || comp.municipality || '';
+                    document.getElementById('c-num').value = comp.buildingNumber || comp.propertyRegistrationNumber || '';
+                    document.getElementById('c-city').value = comp.municipality || '';
+                    document.getElementById('c-zip').value = comp.postalCode || '';
+                    window.liveUpdate();
+                    window.showModal("Údaje úspešne stiahnuté zo štátneho registra!");
+                } else {
+                    window.showModal("Firma s týmto IČO sa nenašla.");
+                }
+            } catch(e) {
+                console.error("IČO Fetch Error:", e);
+                window.showModal("Chyba spojenia so štátnym registrom. Skúste to znova neskôr.");
+            } finally {
+                btn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>';
+            }
+        };
+
+        window.handleExcelImport = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    
+                    let importedCount = 0;
+                    let isOldInvoice = false;
+                    let singleClient = { name: '', street: '', num: '', city: '', zip: '', ico: '', dic: '', icdph: '', defaultAmount: '' };
+
+                    for (let sheetName of workbook.SheetNames) {
+                        const worksheet = workbook.Sheets[sheetName];
+                        const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1});
+                        
+                        for (let r = 0; r < Math.min(rows.length, 250); r++) {
+                            const row = rows[r];
+                            if (!row) continue;
+                            
+                            for (let c = 0; c < row.length; c++) {
+                                if (row[c] === undefined || row[c] === null) continue;
+                                const cellStr = String(row[c]).trim().toLowerCase();
+                                
+                                if (cellStr === 'meno' || cellStr === 'meno:') {
+                                    isOldInvoice = true;
+                                    singleClient.name = String(row[c+1] || '').trim();
+                                }
+                                if (cellStr === 'adresa' || cellStr === 'adresa:') singleClient.street = String(row[c+1] || '').trim();
+                                if (cellStr === 'psč' || cellStr === 'psč:') singleClient.zip = String(row[c+1] || '').trim();
+                                if (cellStr === 'mesto' || cellStr === 'mesto:') singleClient.city = String(row[c+1] || '').trim();
+                                if (cellStr === 'ičo' || cellStr === 'ičo:') singleClient.ico = String(row[c+1] || '').trim();
+                                if (cellStr === 'dič' || cellStr === 'dič:') singleClient.dic = String(row[c+1] || '').trim();
+                                if (cellStr === 'ič dph' || cellStr === 'ič dph:' || cellStr === 'ič dph :') singleClient.icdph = String(row[c+1] || '').trim();
+                                
+                                if (cellStr.includes('celkem k úhradě') || cellStr.includes('celkom k úhrade') || cellStr === 'k úhrade' || cellStr === 'k úhrade:' || cellStr === 'celkom:') {
+                                    for (let k = c + 1; k < Math.min(row.length, c + 10); k++) {
+                                        if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+                                            let amountStr = String(row[k]).replace(',', '.').replace(/[^0-9.]/g, '');
+                                            if (parseFloat(amountStr) > 0) {
+                                                singleClient.defaultAmount = parseFloat(amountStr).toFixed(2);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (!singleClient.defaultAmount && r + 1 < rows.length) {
+                                        let nextRow = rows[r+1];
+                                        if (nextRow && nextRow[c] !== undefined && nextRow[c] !== null && String(nextRow[c]).trim() !== '') {
+                                            let amountStr = String(nextRow[c]).replace(',', '.').replace(/[^0-9.]/g, '');
+                                            if (parseFloat(amountStr) > 0) {
+                                                singleClient.defaultAmount = parseFloat(amountStr).toFixed(2);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (isOldInvoice && singleClient.name && singleClient.defaultAmount) break; 
+                    }
+
+                    if (isOldInvoice && singleClient.name) {
+                        storage.clients.push(singleClient);
+                        importedCount = 1;
+                        let msg = `Odberateľ "${singleClient.name}" bol úspešne extrahovaný!`;
+                        if (singleClient.defaultAmount) msg += ` Nájdená pravidelná suma: ${singleClient.defaultAmount} €`;
+                        window.showModal(msg);
+                    } else {
+                        const firstSheetRows = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {header: 1});
+                        for (let i = 1; i < firstSheetRows.length; i++) {
+                            const cols = firstSheetRows[i];
+                            if (cols && cols.length > 0 && cols[0] !== undefined && String(cols[0]).trim() !== '') {
+                                if (String(cols[0]).trim().toLowerCase() === 'název pole:') continue;
+                                
+                                let amt = String(cols[8] || '').trim().replace(',', '.').replace(/[^0-9.]/g, '');
+                                
+                                storage.clients.push({
+                                    name: String(cols[0] || '').trim(),
+                                    street: String(cols[1] || '').trim(),
+                                    num: String(cols[2] || '').trim(),
+                                    city: String(cols[3] || '').trim(),
+                                    zip: String(cols[4] || '').trim(),
+                                    ico: String(cols[5] || '').trim(),
+                                    dic: String(cols[6] || '').trim(),
+                                    icdph: String(cols[7] || '').trim(),
+                                    defaultAmount: amt ? parseFloat(amt).toFixed(2) : ''
+                                });
+                                importedCount++;
+                            }
+                        }
+                        if (importedCount > 0) window.showModal(`Úspešne importovaných ${importedCount} odberateľov z tabuľky!`);
+                    }
+                    
+                    if (importedCount > 0) {
+                        window.saveAll().then(() => {
+                            window.renderUI();
+                            window.openModal('clients');
+                        });
+                    } else {
+                        window.showModal("Súbor neobsahuje platné dáta (ani hromadný zoznam, ani starú faktúru).");
+                    }
+                } catch(error) {
+                    console.error(error);
+                    window.showModal("Chyba pri čítaní súboru. Uistite sa, že je to platný Excel.");
+                }
+            };
+            
+            reader.readAsArrayBuffer(file);
+            event.target.value = '';
+        };
+
+        window.processImageFile = async function(file) {
+            window.closeModal(); 
+            window.showModal("Sťahujem AI model a analyzujem text z obrázka... Prosím, počkajte (môže to trvať niekoľko sekúnd).", 'alert');
+
+            try {
+                const result = await Tesseract.recognize(file, 'slk', {
+                    logger: m => {
+                        if(m.status === 'recognizing text') {
+                            const progress = Math.round(m.progress * 100);
+                            document.getElementById('unified-modal-message').innerText = `AI OCR číta text... ${progress}%`;
+                        }
+                    }
+                });
+                
+                const text = result.data.text;
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                
+                let icoStr = "", dicStr = "", icdphStr = "", zipStr = "", nameStr = "", streetStr = "";
+                
+                // Extrakcia IČO
+                let icoMatch = text.match(/I[CČcč][O0o]?\s*[:;.-]?\s*([\d\s]{8,11})/i);
+                if (icoMatch && icoMatch[1]) {
+                    icoStr = icoMatch[1].replace(/[^\d]/g, '');
+                } else {
+                    let eightDigits = text.match(/\b\d{8}\b/);
+                    if (eightDigits) icoStr = eightDigits[0];
+                }
+
+                // Extrakcia DIČ
+                let dicMatch = text.match(/DI[CČcč]?\s*[:;.-]?\s*([\d\s]{10})/i);
+                if(dicMatch && dicMatch[1]) dicStr = dicMatch[1].replace(/[^\d]/g, '');
+
+                // Extrakcia IČ DPH
+                let icdphMatch = text.match(/I[CČcč]\s*DPH\s*[:;.-]?\s*(SK[\d\s]{10})/i) || text.match(/(SK\s*[\d\s]{10})/i);
+                if(icdphMatch && icdphMatch[1]) icdphStr = icdphMatch[1].replace(/\s/g, '').toUpperCase();
+
+                // Extrakcia PSČ
+                let zipMatch = text.match(/\b([1-9]\d{2}\s?\d{2})\b/);
+                if(zipMatch && zipMatch[1]) zipStr = zipMatch[1];
+
+                // Pokus o nájdenie Názvu firmy a Ulice na základe kľúčových slov
+                let odberatelIndex = lines.findIndex(l => /odberateľ|kupujúci|prijímateľ|klient/i.test(l));
+                if (odberatelIndex !== -1 && lines.length > odberatelIndex + 1) {
+                    // Riadok pod slovom "Odberateľ" je zvyčajne názov firmy
+                    nameStr = lines[odberatelIndex + 1];
+                    // Ďalší riadok býva ulica
+                    if (lines.length > odberatelIndex + 2) streetStr = lines[odberatelIndex + 2];
+                }
+
+                document.getElementById('unified-modal').classList.add('hidden');
+
+                if (icoStr || nameStr || zipStr) {
+                    if(icoStr) document.getElementById('c-ico').value = icoStr;
+                    if(dicStr) document.getElementById('c-dic').value = dicStr;
+                    if(icdphStr) document.getElementById('c-icdph').value = icdphStr;
+                    if(zipStr) document.getElementById('c-zip').value = zipStr;
+                    if(nameStr) document.getElementById('c-name').value = nameStr;
+                    if(streetStr) document.getElementById('c-street').value = streetStr;
+                    
+                    window.liveUpdate();
+                    window.showModal("Z obrázka sme extrahovali niektoré údaje. Prosím, vizuálne ich skontrolujte a doplňte chýbajúce polia.");
+                } else {
+                    window.showModal("Bohužiaľ, z obrázka sa mi nepodarilo prečítať žiadne jasné údaje odberateľa. Skúste ostrejšiu fotku alebo vložte iný screenshot.");
+                }
+
+            } catch (error) {
+                console.error("OCR Error", error);
+                document.getElementById('unified-modal').classList.add('hidden');
+                window.showModal("Nastala chyba pri analýze obrázka.");
+            }
+        };
+
+        window.handleImageImport = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            window.processImageFile(file);
+            event.target.value = '';
+        };
+
+        window.addEventListener('paste', function(e) {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            for (let index in items) {
+                const item = items[index];
+                if (item.kind === 'file' && item.type.includes('image/')) {
+                    const blob = item.getAsFile();
+                    window.processImageFile(blob);
+                    break;
+                }
+            }
+        });
+
+        // ----------------------------------------------------
+        // INICIALIZÁCIA ROZHRANIA
+        // ----------------------------------------------------
+        const yrS = document.getElementById('sel-year'); if(yrS) {
+            for(let y=2025; y<2031; y++) yrS.innerHTML += `<option value="${y}">${y}</option>`;
+            yrS.value = new Date().getFullYear();
+        }
+        const mS = document.getElementById('sel-month'); if(mS) {
+            ['Január', 'Február', 'Marec', 'Apríl', 'Máj', 'Jún', 'Júl', 'August', 'September', 'Október', 'November', 'December'].forEach((m,i) => mS.innerHTML += `<option value="${i+1}">${m}</option>`);
+            mS.value = new Date().getMonth()+1;
+        }
+
+        // TENTO KROK MUSÍ BYŤ ABSOLÚTNE POSLEDNÝ V KÓDE
+        start();
+
+    </script>
+</body>
+</html>
