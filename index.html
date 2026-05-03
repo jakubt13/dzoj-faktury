@@ -599,11 +599,11 @@
             }
 
             const tb = document.getElementById('out-items-table'); if(!tb) return;
-            tb.innerHTML = '';
             
             let totalBase = 0;
             let totalVat = 0;
             let totalSum = 0;
+            let tableHtml = '';
 
             window.activeItems.forEach(it => {
                 let rowBase = 0, rowVat = 0, rowTotal = 0;
@@ -623,7 +623,7 @@
                     totalVat += rowVat;
                     totalSum += rowTotal;
                     
-                    tb.innerHTML += `<tr class="border-b border-slate-50 text-slate-900">
+                    tableHtml += `<tr class="border-b border-slate-50 text-slate-900">
                         <td class="py-5 px-6 font-black">${it.desc || 'Služby'}</td>
                         <td class="py-5 px-6 text-right font-bold">${rowBase.toFixed(2)} €</td>
                         <td class="py-5 px-6 text-right font-bold text-slate-400">${dphRate}%</td>
@@ -631,12 +631,14 @@
                     </tr>`;
                 } else {
                     totalSum += it.amount;
-                    tb.innerHTML += `<tr class="border-b border-slate-50 text-slate-900">
+                    tableHtml += `<tr class="border-b border-slate-50 text-slate-900">
                         <td class="py-5 px-6 font-black">${it.desc || 'Služby'}</td>
                         <td class="py-5 px-6 text-right font-black text-lg">${it.amount.toFixed(2)} €</td>
                     </tr>`;
                 }
             });
+            
+            tb.innerHTML = tableHtml;
             
             // Aktualizácia súčtov a spodných textov
             set('out-total', totalSum.toFixed(2));
@@ -773,12 +775,14 @@
 
         function renderUI() {
             const ps = document.getElementById('profile-select'); if(ps) {
-                ps.innerHTML = '<option value="">+ Nový profil</option>';
-                (storage.profiles || []).forEach((p,i) => ps.innerHTML += `<option value="${i}">${p.name}</option>`);
+                let pOpts = '<option value="">+ Nový profil / Ručne</option>';
+                (storage.profiles || []).forEach((p,i) => pOpts += `<option value="${i}">${p.name}</option>`);
+                ps.innerHTML = pOpts;
             }
             const cs = document.getElementById('client-select'); if(cs) {
-                cs.innerHTML = '<option value="">+ Nový odberateľ</option>';
-                (storage.clients || []).forEach((c,i) => cs.innerHTML += `<option value="${i}">${c.name}</option>`);
+                let cOpts = '<option value="">+ Nový odberateľ</option>';
+                (storage.clients || []).forEach((c,i) => cOpts += `<option value="${i}">${c.name}</option>`);
+                cs.innerHTML = cOpts;
             }
             const seqEl = document.getElementById('in-seq'); if(seqEl) seqEl.value = (storage.lastSeq || 0) + 1;
             window.renderItemInputs();
