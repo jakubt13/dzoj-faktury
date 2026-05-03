@@ -499,6 +499,18 @@
         window.handleLogout = function() { auth && signOut(auth).then(() => location.reload()); };
 
         function setupSync() {
+            // BEZPEČNOSTNÁ ZÁPLATA: Najskôr natiahneme lokálne dáta, aby sme zabránili ich prepísaniu prázdnym Cloudom
+            try {
+                const local = localStorage.getItem('alibel_db_v4');
+                if(local) {
+                    const parsed = JSON.parse(local);
+                    if(parsed.profiles) storage.profiles = parsed.profiles;
+                    if(parsed.clients) storage.clients = parsed.clients;
+                    if(parsed.invoices) storage.invoices = parsed.invoices;
+                    if(parsed.lastSeq) storage.lastSeq = parsed.lastSeq;
+                }
+            } catch(e) {}
+
             onSnapshot(doc(db, 'artifacts', appId, 'users', user.uid, 'appData', 'main'), (snap) => {
                 if(snap.exists()) { 
                     const data = snap.data();
@@ -508,7 +520,10 @@
                     storage.lastSeq = data.lastSeq || 0;
                     renderUI(); 
                 }
-                else saveAll();
+                else {
+                    saveAll(); // Ak je Cloud úplne prázdny, bezpečne tam nahráme tvoje záchranné lokálne dáta
+                    renderUI();
+                }
             });
         }
 
@@ -1151,7 +1166,7 @@
                     }
                 } catch(error) {
                     console.error(error);
-                    window.showModal("Chyba pri čítaní súboru. Uistite কাশী, že je to platný Excel.");
+                    window.showModal("Chyba pri čítaní súboru. Uistite sa, že je to platný Excel.");
                 }
             };
             
