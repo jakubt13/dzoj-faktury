@@ -189,7 +189,10 @@
                         <option value="">+ Nový odberateľ</option>
                     </select>
                     <div class="space-y-3">
-                        <input type="text" id="c-name" placeholder="Názov odberateľa" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-emerald-50">
+                        <div class="flex gap-2">
+                            <input type="text" id="c-name" placeholder="Názov odberateľa" oninput="window.liveUpdate()" class="w-full p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-emerald-50">
+                            <input type="number" id="c-client-number" placeholder="Číslo klienta (VS)" oninput="window.liveUpdate()" class="w-1/3 p-4 bg-slate-50 rounded-2xl text-sm font-bold outline-none focus:bg-white focus:ring-4 focus:ring-emerald-50" title="Číslo odberateľa pre vytvorenie Variabilného Symbolu">
+                        </div>
                         <div class="grid grid-cols-3 gap-2">
                             <input type="text" id="c-street" placeholder="Ulica" oninput="window.liveUpdate()" class="col-span-2 p-4 bg-slate-50 rounded-2xl text-sm outline-none">
                             <input type="text" id="c-num" placeholder="Číslo" oninput="window.liveUpdate()" class="p-4 bg-slate-50 rounded-2xl text-sm outline-none">
@@ -364,7 +367,7 @@
         <div class="bg-white rounded-[3rem] shadow-2xl w-full max-w-xl p-10 flex flex-col text-slate-900">
             <h2 class="text-3xl font-black mb-4">Napojenie na Databázu</h2>
             <p class="text-sm text-slate-500 mb-6 leading-relaxed">
-                Pretože program beží na vašom vlastnom webe (Netlify), potrebujete vlastnú databázu. <br><br>
+                Pretože program beží na vašom vlastnom webe, potrebujete vlastnú databázu. <br><br>
                 1. Vytvorte si projekt na <b>firebase.google.com</b><br>
                 2. Zapnite <b>Authentication (Google)</b> a <b>Firestore Database</b><br>
                 3. V nastaveniach projektu skopírujte kód a vložte ho sem:
@@ -461,7 +464,9 @@
             } catch(e) { 
                 console.error("Login error:", e);
                 if (e.code === 'auth/unauthorized-domain') {
-                    window.showModal("Chyba: Vaša adresa na Netlify nie je povolená vo Firebase. Pridajte ju v sekcii Authentication -> Settings -> Authorized domains.");
+                    window.showModal("Chyba: Vaša adresa (napr. Netlify, GitHub) nie je povolená vo Firebase. Pridajte ju v sekcii Authentication -> Settings -> Authorized domains.");
+                } else if (e.code === 'auth/configuration-not-found') {
+                    window.showModal("Chyba: Váš Firebase projekt nemá povolené prihlasovanie cez Google. Choďte do Firebase Console -> Authentication -> Sign-in method a povoľte poskytovateľa 'Google'.");
                 } else if (e.code !== 'auth/popup-closed-by-user') {
                     window.showModal("Prihlásenie zlyhalo: " + e.message); 
                 }
@@ -471,7 +476,6 @@
         window.saveCloudConfig = function() {
             let val = document.getElementById('firebase-input').value.trim();
             
-            // Očistenie kódu, ak používateľ skopíroval z Firebase aj premennú (napr. const firebaseConfig = {...};)
             const startIndex = val.indexOf('{');
             const endIndex = val.lastIndexOf('}');
             
@@ -480,7 +484,6 @@
             }
 
             try { 
-                // new Function je oveľa múdrejšia ako JSON.parse a zvládne aj Firebase kód bez úvodzoviek okolo kľúčov
                 const parsed = new Function("return " + val)(); 
                 
                 if (!parsed || !parsed.apiKey) throw new Error("Missing apiKey");
@@ -573,7 +576,7 @@
             // Logika DPH
             const isDph = document.getElementById('m-is-dph').checked;
             const dphRate = parseFloat(document.getElementById('m-dph-rate').value) || 20;
-            const inputMode = document.getElementById('in-dph-mode').value; // 'bez' alebo 's'
+            const inputMode = document.getElementById('in-dph-mode').value;
 
             // Zobrazenie / Skrytie DPH blokov vo formulári
             document.getElementById('dph-settings-block').style.display = isDph ? 'flex' : 'none';
@@ -652,11 +655,18 @@
             updateQR(totalSum, vs);
         };
 
+        function removeDiacritics(str) {
+            return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        }
+
         function updateQR(amt, vs) {
             const qrEl = document.getElementById('qr-code');
             if (!qrEl) return;
             const iban = gv('m-iban').replace(/\s/g, '').toUpperCase();
-            let name = gv('m-name').trim().substring(0, 70);
+            
+            // Odstránenie diakritiky (mäkčene/dĺžne) pre správne načítanie v bankových aplikáciách
+            let rawName = gv('m-name').trim().substring(0, 70);
+            let name = removeDiacritics(rawName);
             
             if (!name) name = 'Firma'; 
             
@@ -666,19 +676,19 @@
             }
             
             const amountStr = `EUR${parseFloat(amt).toFixed(2)}`;
-            const data = ['BCD','002','1','SCT','',name,iban,amountStr,'',vs,'',''].join('\n');
+            // EPC Standard: VS dávame do poľa "Unstructured Remittance Info" s prefixom /VS/ aby ho slovenské banky ľahko spracovali
+            const data = ['BCD','002','1','SCT','',name,iban,amountStr,'','',`/VS/${vs}`,''].join('\n');
             new QRious({ element: qrEl, value: data, size: 250, level: 'M', foreground: '#000000' });
         }
 
         function getVS() {
             const seq = (document.getElementById('in-seq')?.value || '1').toString().padStart(2,'0');
-            const mn = (document.getElementById('sel-month')?.value || '1').toString().padStart(2,'0');
-            const yr = (document.getElementById('sel-year')?.value || '2025');
-            return `${seq}${mn}${yr}`;
+            const clientNum = (document.getElementById('c-client-number')?.value || '00').toString().padStart(2,'0');
+            const yr = (document.getElementById('sel-year')?.value || new Date().getFullYear().toString());
+            return `${seq}${clientNum}${yr}`;
         }
 
         window.addItem = function(btn) { 
-            // Ochrana proti rýchlemu dvojkliku (debounce pomocou časovej pečiatky)
             const now = Date.now();
             if (window.lastAddClick && now - window.lastAddClick < 400) return;
             window.lastAddClick = now;
@@ -722,7 +732,7 @@
             if(!confirm("Naozaj chcete vyčistiť formulár a začať tvoriť novú faktúru?")) return;
 
             document.getElementById('client-select').value = "";
-            ['c-name','c-street','c-num','c-zip','c-city','c-ico','c-dic','c-icdph','c-default-amount'].forEach(id => { 
+            ['c-name','c-client-number','c-street','c-num','c-zip','c-city','c-ico','c-dic','c-icdph','c-default-amount'].forEach(id => { 
                 const el = document.getElementById(id); 
                 if(el) el.value = ''; 
             });
@@ -751,7 +761,7 @@
 
         window.saveClient = function() {
             const c = { 
-                name: gv('c-name'), street: gv('c-street'), num: gv('c-num'), 
+                name: gv('c-name'), clientNumber: gv('c-client-number'), street: gv('c-street'), num: gv('c-num'), 
                 zip: gv('c-zip'), city: gv('c-city'), ico: gv('c-ico'), 
                 dic: gv('c-dic'), icdph: gv('c-icdph'), defaultAmount: gv('c-default-amount') 
             };
@@ -796,8 +806,8 @@
             const c = storage.clients[selIdx];
             if(!c) return;
             
-            ['name','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
-                const el = document.getElementById('c-'+f); 
+            ['name','clientNumber','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
+                const el = document.getElementById('c-'+(f === 'clientNumber' ? 'client-number' : f)); 
                 if(el) el.value = c[f] || ''; 
             });
             
@@ -966,8 +976,8 @@
         window.editClient = function(i) {
             const c = storage.clients[i];
             if(!c) return;
-            ['name','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
-                const el = document.getElementById('c-'+f); 
+            ['name','clientNumber','street','num','zip','city','ico','dic','icdph','defaultAmount'].forEach(f => { 
+                const el = document.getElementById('c-'+(f === 'clientNumber' ? 'client-number' : f)); 
                 if(el) el.value = c[f] || ''; 
             });
             const sel = document.getElementById('client-select');
@@ -1044,7 +1054,7 @@
                     
                     let importedCount = 0;
                     let isOldInvoice = false;
-                    let singleClient = { name: '', street: '', num: '', city: '', zip: '', ico: '', dic: '', icdph: '', defaultAmount: '' };
+                    let singleClient = { name: '', clientNumber: '', street: '', num: '', city: '', zip: '', ico: '', dic: '', icdph: '', defaultAmount: '' };
 
                     for (let sheetName of workbook.SheetNames) {
                         const worksheet = workbook.Sheets[sheetName];
@@ -1111,6 +1121,7 @@
                                 
                                 storage.clients.push({
                                     name: String(cols[0] || '').trim(),
+                                    clientNumber: '', // Necháme prázdne z importu, používateľ si môže doplniť
                                     street: String(cols[1] || '').trim(),
                                     num: String(cols[2] || '').trim(),
                                     city: String(cols[3] || '').trim(),
@@ -1136,7 +1147,7 @@
                     }
                 } catch(error) {
                     console.error(error);
-                    window.showModal("Chyba pri čítaní súboru. Uistite sa, že je to platný Excel.");
+                    window.showModal("Chyba pri čítaní súboru. Uistite কাশী, že je to platný Excel.");
                 }
             };
             
